@@ -1,0 +1,112 @@
+#+title: dexador.backend.curl-impersonate
+#+subtitle: Common Lisp bindings of [[https://curl-impersonate.readthedocs.io][curl-impersonate]] as dexador backend
+#+author: 凉凉
+* About
+This is a trivial CFFI binding of [[https://curl-impersonate.readthedocs.io][curl-impersonate]]
+([[https://github.com/lexiforest/curl-impersonate/][github@lexiforest/curl-impersonate]], making curl request
+like native browser).
+
+* Usage
+** Pre-requirements
+You need the [[https://curl-impersonate.readthedocs.io/en/latest/install.html][curl-impersonate]] installed first.
+Or will fallback to prebuilt binary library.
+
+** Enable curl-impersonate backend
+Invoke =dexador.curl-impersonate:init= will setup the curl-impersonate
+backend for dexador. After that, you can use =dex:request= normally,
+the =dex:*dexador-backend*= will be set as =:curl-impersonate=.
+
+You can call =dexador.curl-impersonate:cleanup= to unset the backend,
+or just set =dex:*dexador-backend*= to something else to temperary
+change the backend.
+
+* API
+** DEXADOR.BACKEND.CURL-IMPERSONATE.FFI
+:PROPERTIES:
+:header-args:lisp: :package dexador.backend.curl-impersonate.ffi :eval no-export
+:END:
+
++ =(curl-global-init flags)= *[Function]*
+
+  #+name: doc:curl-global-init
+  #+begin_src lisp :exports results
+    (documentation #'curl-global-init t)
+  #+end_src
+
+  #+RESULTS: doc:curl-global-init
+  #+begin_example
+  Sets up the program environment that libcurl needs.
+
+  Parameter:
+  + FLAGS: a list of keywords, or keyword
+    + `:all' initialize everything possible,
+      this sets all known bits except `:ack-eintr'
+    + `:ssl' initialize SSL
+    + `:winsock' initialize windows sockets
+    + `:nothing' initialize nothing extra
+    + `:default' (equal as nil FLAGS)
+  #+end_example
+
++ =(curl-easy-init)= *[Function]*
+
+  #+name: doc:curl-easy-init
+  #+begin_src lisp :exports results
+    (documentation #'curl-easy-init t)
+  #+end_src
+
+  #+RESULTS: doc:curl-easy-init
+  : Return handle pointer to CURL.
+
++ =(curl-easy-cleanup handle)= *[Function]*
+
+  #+name: doc:curl-easy-cleanup
+  #+begin_src lisp :exports results
+    (documentation #'curl-easy-cleanup t)
+  #+end_src
+
++ =(curl-easy-perform handle)= *[Function]*
+
+  #+name: doc:curl-easy-perform
+  #+begin_src lisp :exports results
+    (documentation #'curl-easy-perform t)
+  #+end_src
+
++ =(curl-easy-stderr handle)= *[Function]*
+
+  #+name: doc:curl-easy-stderr
+  #+begin_src lisp :exports results
+    (documentation #'curl-easy-stderr t)
+  #+end_src
+
++ =(curl-easy-setopt handle option parameter)= *[Function]*
+
+  #+name: doc:curl-easy-setopt
+  #+begin_src lisp :exports results
+    (documentation #'curl-easy-setopt t)
+  #+end_src
+
++ =(curl-easy-impersonate handle impersonate default-headers)= *[Function]*
+
+  #+name: doc:curl-easy-impersonate
+  #+begin_src lisp :exports results
+    (documentation #'curl-easy-impersonate t)
+  #+end_src
+
+** DEXADOR.BACKEND.CURL-IMPERSONATE
+:PROPERTIES:
+:heaer-args:lisp: :package dexador.backend.curl-impersonate :eval no-export
+:END:
+
++ =*impersonate*= *[Variable]*
+
+  #+name: doc:*impersonate*
+  #+begin_src lisp :exports results
+    (documentation '*impersonate* 'variable)
+  #+end_src
+
++ =(request uri &key method version content headers ...)= *[Function]*
+
+  #+name: doc:request
+  #+begin_src lisp :exports results
+    (documentation #'request t)
+  #+end_src
