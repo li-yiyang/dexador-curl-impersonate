@@ -3,6 +3,27 @@
 (in-package :dexador.backend.curl-impersonate.ffi)
 
 
+;;;; Conditions
+
+(defcfun (curl-easy-strerror "curl_easy_strerror"
+                             :library libcurl-impersonate)
+    :string
+  "Return error string of error code ERRNO. "
+  (errno :int))
+
+(define-condition curl-error (error)
+  ((errno :initarg :errno))
+  (:report (lambda (condition stream)
+             (with-slots (errno) condition
+               (format stream "[~D] ~A" errno (curl-easy-strerror errno))))))
+
+(defun check-curl-code (curl-code)
+  (declare (type fixnum curl-code))
+  (if (zerop curl-code)
+      t
+      (error 'curl-error :errno curl-code)))
+
+
 ;;;; Basic curl warpper
 
 (defun as-curl-init-flags (flags)
@@ -31,11 +52,11 @@ Parameter:
   + `:nothing' initialize nothing extra
   + `:default' (equal as nil FLAGS)
 "
-  (let ((res (foreign-funcall ("curl_global_init" :library libcurl-impersonate)
-                              :long (as-curl-init-flags flags)
-                              :int)))
-    (unless (zerop res)
-      (error "Failed to initialize curl global environment. "))))
+  (check-curl-code
+   (foreign-funcall
+    ("curl_global_init" :library libcurl-impersonate)
+    :long (as-curl-init-flags flags)
+    :int)))
 
 (defcfun (curl-global-cleanup "curl_global_cleanup"
                               :library libcurl-impersonate)
@@ -57,26 +78,11 @@ Parameter:
 (defun curl-easy-perform (handle)
   "Perform the curl operation. "
   (declare (type foreign-pointer handle))
-  (let ((res (foreign-funcall ("curl_easy_perform" :library libcurl-impersonate)
-                              :pointer handle
-                              :int)))
-    (unless (zerop res)
-      (error "Failed to perform request for curl ~A.~%[~D] ~A"
-             handle
-             res
-             (curl-easy-strerror res)))
-    (values (zerop res) res)))
-
-(defcfun (curl-easy-strerror "curl_easy_strerror" :library libcurl-impersonate) :string
-  "Return error string of error code ERRNO. "
-  (errno :int))
-
-(declaim (inline check-curl-easy-setopt))
-(defun check-curl-easy-setopt (res)
-  (declare (type fixnum res))
-  (if (zerop res)
-      t
-      (error "Failed to set curl option.~%~A" (curl-easy-strerror res))))
+  (check-curl-code
+   (foreign-funcall
+    ("curl_easy_perform" :library libcurl-impersonate)
+    :pointer handle
+    :int)))
 
 (macrolet ((setopt (&body ctype-enums)
              `(progn
@@ -115,7 +121,7 @@ Parameters:
                      (format doc "~&+ PARAMETER: value set as curl options"))
                   (declare (type foreign-pointer handle)
                            (type keyword option))
-                  (check-curl-easy-setopt
+                  (check-curl-code
                    (ecase option
                      ,@(loop :for (name* . enums) :in ctype-enums
                              :for name  := (alx:ensure-car name*)
@@ -128,14 +134,10 @@ Parameters:
                         ,@(loop :for (name* . enums) :in ctype-enums
                                 :for name := (alx:ensure-car name*)
                                 :for fn   := (symbol-concat "%CURL-EASY-SETOPT-" name)
-                                :collect (list
-                                          (mapcar #'first enums)
-                                          (list 'check-curl-easy-setopt
-                                                (list fn
-                                                      'handle
-                                                      `(ecase option
-                                                         ,@(mapcar #'butlast enums))
-                                                      'parameter)))))
+                                :collect `(,(mapcar #'first enums)
+                                           (let ((enum (ecase option
+                                                         ,@(mapcar #'butlast enums))))
+                                             `(check-curl-code (,',fn ,handle ,enum ,parameter))))))
                       form)))))
   ;; Syntax
   ;;
@@ -168,19 +170,17 @@ Parameters:
     (:max-redirs         68 "maximum number of redirects to follow,
     -1 for unlimited"))
 
-   ((:url    :ctype   :string
-             :type    (or string quri:uri)
-             :convert (etypecase parameter
-                        (string   parameter)
-                        (quri:uri (quri:render-uri parameter))))
+   ((:url :ctype   :string
+          :type    (or string quri:uri)
+          :convert (etypecase parameter
+                     (string   parameter)
+                     (quri:uri (quri:render-uri parameter))))
     (:url   10002 "target request URL, string or `quri:uri'")
     (:proxy 10004 "proxy URL (scheme://host:port), string or `quri:uri'"))
 
    ((:string :type string)
     (:key-password    10026 "passphrase for the private key given in `:ssl-key'")
-    (:custom-request  10036 "custom HTTP method name to use e.g. \"PATCH\""))
-
-   ((:pointer :type foreign-pointer)
+    (:custom-request  10036 "custom HTTP method name to use e.g. \"PATCH\"")
     (:post-fields     10015 "request body to send with a POST"))
 
    ((:pathname :ctype   :string
@@ -271,6 +271,7 @@ Syntax:
   HANDLE and OPTION, VALUE.
 "
   `(let ((,handle (curl-easy-init)))
+     (declare (type foreign-pointer ,handle))
      (unwind-protect
           (progn
             ,@(loop :for (opt para) :on args :by #'cddr
