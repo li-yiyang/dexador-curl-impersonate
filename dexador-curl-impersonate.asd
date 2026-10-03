@@ -2,7 +2,7 @@
 
 (defsystem #:dexador-curl-impersonate
   :author ("凉凉")
-  :license "LGPL"
+  :license "MIT"
   :version "0.0.0"
   :description "CL binding of curl-impersonate for dexador backend. "
   :depends-on (:dexador
