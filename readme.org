@@ -26,6 +26,9 @@ change the backend.
 :header-args:lisp: :package dexador.backend.curl-impersonate.ffi :eval no-export
 :END:
 
++ =libcurl-impersonate= *[CFFI Library]*
++ =curl-error= *[Condition]*
++ =(curl-error-errno curl-error)= *[Generic Function]*
 + =(curl-global-init flags)= *[Function]*
 
   #+name: doc:curl-global-init
@@ -46,7 +49,6 @@ change the backend.
     + `:nothing' initialize nothing extra
     + `:default' (equal as nil FLAGS)
   #+end_example
-
 + =(curl-easy-init)= *[Function]*
 
   #+name: doc:curl-easy-init
@@ -64,6 +66,9 @@ change the backend.
     (documentation #'curl-easy-cleanup t)
   #+end_src
 
+  #+RESULTS: doc:curl-easy-cleanup
+  : Clean up curl HANDLE and callbacks.
+
 + =(curl-easy-perform handle)= *[Function]*
 
   #+name: doc:curl-easy-perform
@@ -71,12 +76,18 @@ change the backend.
     (documentation #'curl-easy-perform t)
   #+end_src
 
-+ =(curl-easy-stderr handle)= *[Function]*
+  #+RESULTS: doc:curl-easy-perform
+  : Perform the curl operation.
 
-  #+name: doc:curl-easy-stderr
++ =(curl-easy-strerror handle)= *[Function]*
+
+  #+name: doc:curl-easy-strerror
   #+begin_src lisp :exports results
-    (documentation #'curl-easy-stderr t)
+    (documentation #'curl-easy-strerror t)
   #+end_src
+
+  #+RESULTS: doc:curl-easy-strerror
+  : Return error string of error code ERRNO.
 
 + =(curl-easy-setopt handle option parameter)= *[Function]*
 
@@ -85,6 +96,71 @@ change the backend.
     (documentation #'curl-easy-setopt t)
   #+end_src
 
+  #+RESULTS: doc:curl-easy-setopt
+  #+begin_example
+  Set the OPTION of curl HANDLE with PARAMETER.
+  Return `t' for success, `nil' otherwise.
+
+  Parameters:
+  + HANDLE: foreign-pointer
+  + OPTION:
+
+    boolean switch flags
+    + `:http-get' use HTTP GET method
+    + `:http-post' use HTTP POST method
+    + `:follow-location' if or not follow HTTP 3xx Location redirects
+    + `:ssl-verify-peer' if or not verify the peer's SSL certificate
+    + `:no-body' no body
+    + `:verbose' if or not output verbose infomation
+
+    boolean switch flags (0 or 2)
+    + `:ssl-verify-host'
+      if or not verify the server certificate's name matches host
+
+    long
+    + `:http-version' HTTP version to use, possible values:
+      + `+curl-http-version-1.0+'
+      + `+curl-http-version-1.1+'
+      + `+curl-http-version-2.0+'
+      + `+curl-http-version-3+'
+    + `:post-field-size' size in bytes of the data posted
+    + `:connect-timeout' seconds to wait for the connection
+    + `:timeout' seconds to wait for the request to complete
+    + `:max-redirs' maximum number of redirects to follow,
+      -1 for unlimited
+
+    url
+    + `:url' target request URL, string or `quri:uri'
+    + `:proxy' proxy URL (scheme://host:port), string or `quri:uri'
+
+    string
+    + `:key-password' passphrase for the private key given in `:ssl-key'
+    + `:custom-request' custom HTTP method name to use e.g. "PATCH"
+    + `:post-fields' request body to send with a POST
+    + `:accept-encoding' content encodings curl should accept and
+      transparently decode, "" for every encoding curl was built with.
+      Note: this only enables curl's response decoding -- the
+      `Accept-Encoding' request header itself keeps whatever value
+      `curl-easy-impersonate' put in the `:http-header' list, so setting
+      this does not change the request fingerprint
+
+    pathname
+    + `:ssl-cert' path to the client certificate file
+    + `:ssl-key' path to the client private key file
+    + `:ca-path' path to a directory of CA certificates for peer verification
+
+    pointer
+    + `:http-header' a foreign-pointer to curl_slist
+       use `with-curl-slist' to create a curl_slist from string list
+    + `:post-fields*' a foreign-pointer to raw post fields
+
+    header-function
+    + `:header-function' function as writer callback
+
+    writer-function
+    + `:writer-function' function as writer callback
+  + PARAMETER: value set as curl options
+  #+end_example
 + =(curl-easy-impersonate handle impersonate default-headers)= *[Function]*
 
   #+name: doc:curl-easy-impersonate
@@ -92,10 +168,43 @@ change the backend.
     (documentation #'curl-easy-impersonate t)
   #+end_src
 
+  #+RESULTS: doc:curl-easy-impersonate
+  : Set curl HANDLE with browser IMPERSONATE.
+
 ** DEXADOR.BACKEND.CURL-IMPERSONATE
 :PROPERTIES:
-:heaer-args:lisp: :package dexador.backend.curl-impersonate :eval no-export
+:header-args:lisp: :package dexador.curl-impersonate :eval no-export
 :END:
+
++ =impersonate= *[Type]*
+
+  #+name: doc:impersonate
+  #+begin_src lisp :exports results
+    (documentation 'impersonate 'type)
+  #+end_src
+
+  #+RESULTS: doc:impersonate
+  #+begin_example
+  Browser impersonate names.
+
+  Pre-defined browser impersonate can be found in
+  `*built-in-impersonate*';
+
+  Or you can use some alias like `:safari', `:chrome',
+  `:firefox', `:tor', `:edge';
+
+  Or you can also define new browser impersonate
+  in `*impersonates*' (dev only, currently not supported).
+  #+end_example
++ =(impersonate-p impersonate)= *[Function]*
+
+  #+name: doc:impersonate-p
+  #+begin_src lisp :exports results
+    (documentation #'impersonate-p t)
+  #+end_src
+
+  #+RESULTS: doc:impersonate-p
+  : Test if IMPERSONATE is type of `impersonate'.
 
 + =*impersonate*= *[Variable]*
 
@@ -104,9 +213,33 @@ change the backend.
     (documentation '*impersonate* 'variable)
   #+end_src
 
+  #+RESULTS: doc:*impersonate*
+  : Currently used browser `impersonate'.
+
 + =(request uri &key method version content headers ...)= *[Function]*
 
-  #+name: doc:request
++ =(init &key curl-flags)= *[Function]*
+
+  #+name: doc:init
   #+begin_src lisp :exports results
-    (documentation #'request t)
+    (documentation #'init t)
   #+end_src
+
+  #+RESULTS: doc:init
+  : Initialize `dex:request' backend for curl-impersonate.
+  :
+  : This will:
+  : + setup curl global environment (`curl-global-init')
+  : + patch original `dex:request' implementation to support
+  :   `:curl-impersonate' backend, and the `dex:*dexador-backend*'
+  :   will be set to `:curl-impersonate'.
+
++ =(cleanup)= *[Function]*
+
+  #+name: doc:cleanup
+  #+begin_src lisp :exports results
+    (documentation #'cleanup t)
+  #+end_src
+
+  #+RESULTS: doc:cleanup
+  : Clean up curl and reset dexador.

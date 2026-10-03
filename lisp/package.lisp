@@ -29,6 +29,8 @@ use for the package `dexador.backend.curl-impersonate'. ")
                 #:symbol-concat)
   (:export
    #:libcurl-impersonate
+   #:curl-error
+   #:curl-error-errno
    #:curl-global-init
    #:curl-global-cleanup
    #:curl-easy-init
@@ -39,10 +41,12 @@ use for the package `dexador.backend.curl-impersonate'. ")
    #:curl-easy-getinfo
    #:impersonate
    #:impersonate-p
+   #:*built-in-impersonate*
    #:curl-easy-impersonate
    #:curl-version
    #:with-curl-slist
    #:with-easy-curl-handle
+   #:+curle-too-many-redirects+
    #:+curl-http-version-1.0+
    #:+curl-http-version-1.1+
    #:+curl-http-version-2.0+
@@ -54,11 +58,13 @@ use for the package `dexador.backend.curl-impersonate'. ")
    :dexador.backend.curl-impersonate.ffi
    :dexador.restarts
    :dexador.encoding
+   :dexador.body
    :dexador.util)
   (:nicknames
    :dexador.curl-impersonate)
-  (:local-nicknames (:alx :alexandria)
-                    (:tgs :trivial-gray-streams))
+  (:local-nicknames (:alx  :alexandria)
+                    (:tgs  :trivial-gray-streams)
+                    (:derr :dexador.error))
   (:documentation
    "The package `dexador.backend.curl-impersonate' provides
 a `dexador:request' backend on curl-impersonate.
@@ -68,19 +74,8 @@ Setting the variable `*impersonate*' will change the
 the `*impersonate*' should be `impersonate-p', which means
 it is one of pre-defined browser impersonate or one of
 you-defined `impersonate'.
-
-To define your own `impersonate', use
-`define-browser-impersonate':
-
-    (define-browser-impersonate IMPERSONATE
-      DOCUMENTATION
-      )
-
-To get documentation of impersonate, use
-(documentation IMPERSONATE 'IMPERSONATE). ")
+")
   (:export
-   #:curl-stream
-   #:define-browser-impersonate
    #:impersonate
    #:impersonate-p
    #:*impersonate*

@@ -12,7 +12,13 @@
   (errno :int))
 
 (define-condition curl-error (error)
-  ((errno :initarg :errno))
+  ((errno
+    :initarg :errno
+    :type    fixnum
+    :reader  curl-error-errno
+    :documentation
+    "Return the error number (curl code) of `curl-error'.
+Use `curl-easy-strerror' to get error message about the `curl-error'. "))
   (:report (lambda (condition stream)
              (with-slots (errno) condition
                (format stream "[~D] ~A" errno (curl-easy-strerror errno))))))
@@ -232,7 +238,13 @@ Parameters:
    ((:string :type string)
     (:key-password    10026 "passphrase for the private key given in `:ssl-key'")
     (:custom-request  10036 "custom HTTP method name to use e.g. \"PATCH\"")
-    (:post-fields     10015 "request body to send with a POST"))
+    (:post-fields     10015 "request body to send with a POST")
+    (:accept-encoding 10102 "content encodings curl should accept and
+    transparently decode, \"\" for every encoding curl was built with.
+    Note: this only enables curl's response decoding -- the
+    `Accept-Encoding' request header itself keeps whatever value
+    `curl-easy-impersonate' put in the `:http-header' list, so setting
+    this does not change the request fingerprint"))
 
    ((:pathname :ctype   :string
                :type    (or string pathname)
@@ -242,8 +254,9 @@ Parameters:
     (:ca-path  10097 "path to a directory of CA certificates for peer verification"))
 
    (:pointer
-    (:http-header 10023 "a foreign-pointer to curl_slist
-     use `with-curl-slist' to create a curl_slist from string list"))
+    (:http-header  10023 "a foreign-pointer to curl_slist
+     use `with-curl-slist' to create a curl_slist from string list")
+    (:post-fields* 10015 "a foreign-pointer to raw post fields"))
 
    ((:header-function
      :ctype   :pointer
@@ -425,8 +438,7 @@ Val: a plist of OPTION and PARAMETER, the OPTION should be:
 
 (declaim (type (cons keyword list) *built-in-impersonate*))
 (defvar *built-in-impersonate*
-  '(:chrome
-    :chrome99
+  '(:chrome99
     :chrome100
     :chrome101
     :chrome104
@@ -443,51 +455,85 @@ Val: a plist of OPTION and PARAMETER, the OPTION should be:
     :chrome142
     :chrome145
     :chrome146
+    :chrome150
     :chrome99_android
     :chrome131_android
 
-    :edge
     :edge99
     :edge101
 
-    :safari
+    :safari15_3
+    :safari15_5
     :safari153
     :safari155
+    :safari17_0
+    :safari17_2_ios
     :safari170
     :safari172_ios
+    :safari18_0
+    :safari18_0_ios
+    :safari18_4
+    :safari18_4_ios
     :safari180
     :safari180_ios
     :safari184
     :safari184_ios
+    :safari26_0
+    :safari26_0_1
+    :safari26_0_ios
     :safari260
     :safari260_ios
     :safari2601
 
-    :firefox
     :firefox133
     :firefox135
     :firefox144
     :firefox147
 
-    :tor
     :tor145)
   "A list of built-in browser `impersonate'. ")
 
+(defvar *safari-impersonate*  :safari260)
+(defvar *chrome-impersonate*  :chrome146)
+(defvar *firefox-impersonate* :firefox147)
+(defvar *tor-impersonate*     :tor145)
+(defvar *edge-impersonate*    :edge101)
+
 (deftype impersonate ()
+  "Browser impersonate names.
+
+Pre-defined browser impersonate can be found in
+`*built-in-impersonate*';
+
+Or you can use some alias like `:safari', `:chrome',
+`:firefox', `:tor', `:edge';
+
+Or you can also define new browser impersonate
+in `*impersonates*' (dev only, currently not supported)."
   '(satisfies impersonate-p))
 
 (defun impersonate-p (impersonate)
   "Test if IMPERSONATE is type of `impersonate'. "
   (and (keywordp impersonate)
-       (or (member impersonate *built-in-impersonate*)
+       (or (member impersonate '(:safari :chrome :firefox :tor :edge))
+           (member impersonate *built-in-impersonate*)
            (and (gethash impersonate *impersonates*) t))))
 
 (defun curl-easy-impersonate (handle impersonate
                               &optional use-default-headers-p)
-  "Apply HANDLE"
+  "Set curl HANDLE with browser IMPERSONATE. "
   (declare (type foreign-pointer handle)
            (type impersonate impersonate))
-  (cond ((member impersonate *built-in-impersonate*)
+  (cond ((member impersonate '(:safari :chrome :firefox :tor :edge))
+         (curl-easy-impersonate handle
+                                (ecase impersonate
+                                  (:safari  *safari-impersonate*)
+                                  (:chrome  *chrome-impersonate*)
+                                  (:firefox *firefox-impersonate*)
+                                  (:tor     *tor-impersonate*)
+                                  (:edge    *edge-impersonate*))
+                                use-default-headers-p))
+        ((member impersonate *built-in-impersonate*)
          (check-curl-code
           (foreign-funcall "curl_easy_impersonate"
                            :pointer handle
@@ -506,6 +552,8 @@ Val: a plist of OPTION and PARAMETER, the OPTION should be:
 (defconstant +curl-http-version-1.1+ 2)
 (defconstant +curl-http-version-2.0+ 3)
 (defconstant +curl-http-version-3+   30)
+(defconstant +curle-too-many-redirects+ 47
+  "`CURLE_TOO_MANY_REDIRECTS': `:max-redirs' was exceeded. ")
 
 (defmacro with-curl-slist ((slist list) &body body)
   "Create a curl string list SLIST of lisp string LIST.
