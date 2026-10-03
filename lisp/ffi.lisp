@@ -24,6 +24,30 @@
       (error 'curl-error :errno curl-code)))
 
 
+;;;; Callback lookup table
+
+(defvar *curl-callbacks* (make-hash-table :test 'eql)
+  "Key: curl handle pointer address
+Val: alist of (CALLBACK-NAME . CALLBACK-FUNCTION)")
+
+(defun get-curl-callback (handle callback-name)
+  "Return callback function of CALLBACK-NAME for HANDLE. "
+  (declare (type foreign-pointer handle)
+           (type keyword callback-name))
+  (alx:when-let ((alist (gethash (pointer-address handle)
+                                 *curl-callbacks*)))
+    (the function (alx:assoc-value alist callback-name))))
+
+(defun (setf get-curl-callback) (callback-function handle callback-name)
+  (declare (type foreign-pointer handle)
+           (type keyword callback-name)
+           (type function callback-function))
+  (setf (alx:assoc-value (gethash (pointer-address handle)
+                                  *curl-callbacks*)
+                         callback-name)
+        callback-function))
+
+
 ;;;; Basic curl warpper
 
 (defun as-curl-init-flags (flags)
@@ -71,9 +95,13 @@ Parameter:
       (error "Failed to init curl. "))
     curl))
 
-(defcfun (curl-easy-cleanup "curl_easy_cleanup" :library libcurl-impersonate) :void
-  "Clean up curl HANDLE. "
-  (handle :pointer))
+(defun curl-easy-cleanup (handle)
+  "Clean up curl HANDLE and callbacks. "
+  (declare (type foreign-pointer handle))
+  (remhash (pointer-address handle) *curl-callbacks*)
+  (foreign-funcall
+   ("curl_easy_cleanup" :library libcurl-impersonate)
+   :pointer handle))
 
 (defun curl-easy-perform (handle)
   "Perform the curl operation. "
@@ -83,6 +111,27 @@ Parameter:
     ("curl_easy_perform" :library libcurl-impersonate)
     :pointer handle
     :int)))
+
+(defcallback curl-writer-function :size
+    ((buffer :pointer)
+     (size   :size)
+     (nmemb  :size)
+     (handle :pointer))
+  (declare (ignore size))
+  (alx:when-let ((callback (get-curl-callback handle :writer-function)))
+    (handler-case (funcall (the function callback) buffer nmemb)
+      (error () (setf nmemb 0))))
+  nmemb)
+
+(defcallback curl-header-function :size
+    ((buffer :pointer)
+     (size   :size)
+     (nitems :size)
+     (handle :pointer))
+  (declare (ignore size))
+  (alx:when-let ((callback (get-curl-callback handle :header-function)))
+    (ignore-errors (funcall (the function callback) buffer nitems)))
+  nitems)
 
 (macrolet ((setopt (&body ctype-enums)
              `(progn
@@ -151,7 +200,9 @@ Parameters:
     (:http-get        80 "use HTTP GET method")
     (:http-post       47 "use HTTP POST method")
     (:follow-location 52 "if or not follow HTTP 3xx Location redirects")
-    (:ssl-verify-peer 64 "if or not verify the peer's SSL certificate"))
+    (:ssl-verify-peer 64 "if or not verify the peer's SSL certificate")
+    (:no-body         44 "no body")
+    (:verbose         41 "if or not output verbose infomation"))
    ((:bool2 :ctype         :long
             :convert       (if parameter 2 0)
             :documentation "boolean switch flags (0 or 2)")
@@ -186,22 +237,40 @@ Parameters:
    ((:pathname :ctype   :string
                :type    (or string pathname)
                :convert (uiop:native-namestring (truename parameter)))
-    (:ssl-cert        10025 "path to the client certificate file")
-    (:ssl-key         10087 "path to the client private key file")
-    (:ca-path         10097 "
-    path to a directory of CA certificates for peer verification"))))
+    (:ssl-cert 10025 "path to the client certificate file")
+    (:ssl-key  10087 "path to the client private key file")
+    (:ca-path  10097 "path to a directory of CA certificates for peer verification"))
+
+   (:pointer
+    (:http-header 10023 "a foreign-pointer to curl_slist
+     use `with-curl-slist' to create a curl_slist from string list"))
+
+   ((:header-function
+     :ctype   :pointer
+     :type    function
+     :convert (progn
+                (setf (get-curl-callback handle :header-function)
+                      (the function parameter))
+                ;; header-function => headerdata => 10001
+                (%curl-easy-setopt-pointer handle 10029 handle)
+                (get-callback 'curl-header-function)))
+    (:header-function 20079 "function as writer callback"))
+
+   ((:writer-function
+     :ctype   :pointer
+     :type    function
+     :convert (progn
+                (setf (get-curl-callback handle :writer-function)
+                      (the function parameter))
+                ;; writer-function => writedata => 10001
+                (%curl-easy-setopt-pointer handle 10001 handle)
+                (get-callback 'curl-writer-function)))
+    (:writer-function 20011 "function as writer callback"))
+   ))
 
 (defcfun (curl-version "curl_version"
                        :library libcurl-impersonate)
     :string)
-
-(defcfun (curl-easy-impersonate "curl_easy_impersonate"
-                                :library libcurl-impersonate)
-    :int
-  "Tell libcurl to impersonate a browser. "
-  (handle          :pointer)
-  (target          :string)
-  (default-headers :int))
 
 (defcfun (curl-slist-append "curl_slist_append"
                             :library libcurl-impersonate)
@@ -232,6 +301,203 @@ Return foreign-pointer to curl_slist. "
         (unless (null-pointer-p slist)
           (curl-slist-free-all slist))
         (error err)))))
+
+(defun %curl-easy-getinfo (handle info ctype)
+  (with-foreign-object (slot ctype)
+    (check-curl-code
+     (foreign-funcall-varargs
+      ("curl_easy_getinfo" :library libcurl-impersonate)
+      (:pointer handle :int info)
+      :pointer slot
+      :int))
+    (mem-ref slot ctype)))
+
+(macrolet ((getinfo (&body ctype-enums)
+             `(progn
+                (defun curl-easy-getinfo (handle info)
+                  ,(with-output-to-string (doc)
+                     (write-string "Get the INFO of curl HANDLE.
+
+Parameters:
++ HANDLE: foreign-pointer to curl handle
++ INFO:
+"
+                                   doc)
+                     (loop :for (name* . enums) :in ctype-enums
+                           :for docstr := (if (listp name*)
+                                              (getf (cdr name*) :documentation (car name*))
+                                              name*)
+                           :do (format doc "~%  ~A~%" docstr)
+                               (loop :for (enum - docstr) :in enums
+                                     :do (format doc "  + `~S' ~A~&" enum docstr))))
+                  (declare (type foreign-pointer handle)
+                           (type keyword info))
+                  (ecase info
+                    ,@(loop :for (name* . enums) :in ctype-enums
+                            :collect
+                            (destructuring-bind (name &key (ctype name)
+                                                 &allow-other-keys)
+                                (alx:ensure-list name*)
+                              `(,(mapcar #'first enums)
+                                (%curl-easy-getinfo
+                                 handle
+                                 (ecase info
+                                   ,@(mapcar #'butlast enums))
+                                 ,ctype))))))
+                (define-compiler-macro curl-easy-getinfo (&whole form handle info)
+                  (if (keywordp info)
+                      (ecase info
+                        ,@(loop :for (name* . enums) :in ctype-enums
+                                :collect
+                                (destructuring-bind (name &key (ctype name)
+                                                 &allow-other-keys)
+                                    (alx:ensure-list name*)
+                                  (let ((expr `(ecase info
+                                                 ,@(mapcar #'butlast enums))))
+                                    `(,(mapcar #'first enums)
+                                      (let ((info ,expr))
+                                        `(%curl-easy-getinfo ,handle
+                                                             ,info
+                                                             ,',ctype)))))))
+                      form)))))
+  (getinfo
+   (:long
+    (:response-code 2097154 "HTTP response code"))
+   (:string
+    (:effective-url 1048577 "actual URL")
+    (:content-type  1048594 "content type"))))
+
+
+;;;; impersonate
+
+(declaim (type hash-table *impersonates*))
+(defvar *impersonates* (make-hash-table :test 'eq)
+  "Key: impersonate name
+Val: a plist of OPTION and PARAMETER, the OPTION should be:
++ `:http-version'
++ `:ssl-version'
++ `:ssl-cipher-list'
++ `:ssl-ec-curves'
++ `:http3-ssl-ec-curves'
++ `:ssl-signature-algorithms'
++ `:http3-sig-hash-algs'
++ `:ssl-enable-npn'
++ `:ssl-enable-alpn'
++ `:ssl-enable-alps'
++ `:ssl-enable-ticket'
++ `:ws-ssl-disable-ticket'
++ `:tls-signed-cert-timestamps'
++ `:tls-status-request'
++ `:tls-trust-anchors'
++ `:ssl-permute-extensions'
++ `:ssl-cert-compression'
++ `:ws-ssl-cert-compression'
++ `:http-base-header'
++ `:http2-pseudo-headers-order'
++ `:http2-settings'
++ `:http2-pseudo-headers-order'
++ `:http2-settings'
++ `:http-header-order'
++ `:http3-http-header-order'
++ `:ws-http-header-order'
++ `:http3-pseudo-headers-order'
++ `:http3-settings'
++ `:quic-cid-length'
++ `:quic-initial-packet-number'
++ `:quic-transport-parameters'
++ `:http2-window-update'
++ `:http2-streams'
++ `:http2-no-priority'
++ `:ech'
++ `:tls-grease'
++ `:tls-extension-order'
++ `:http3-tls-extension-order'
++ `:tls-delegated-credentials'
++ `:tls-record-size-limit'
++ `:tls-key-shapes-limit'
++ `:tls-use-new-alps-codepoint'
++ `:stream-weight'
++ `:stream-exclusive'
++ `:proxy-credential-no-reuse'
++ `:split-cookies'
++ `:form-boundary'
+")
+
+(declaim (type (cons keyword list) *built-in-impersonate*))
+(defvar *built-in-impersonate*
+  '(:chrome
+    :chrome99
+    :chrome100
+    :chrome101
+    :chrome104
+    :chrome107
+    :chrome110
+    :chrome116
+    :chrome119
+    :chrome120
+    :chrome123
+    :chrome124
+    :chrome131
+    :chrome133a
+    :chrome136
+    :chrome142
+    :chrome145
+    :chrome146
+    :chrome99_android
+    :chrome131_android
+
+    :edge
+    :edge99
+    :edge101
+
+    :safari
+    :safari153
+    :safari155
+    :safari170
+    :safari172_ios
+    :safari180
+    :safari180_ios
+    :safari184
+    :safari184_ios
+    :safari260
+    :safari260_ios
+    :safari2601
+
+    :firefox
+    :firefox133
+    :firefox135
+    :firefox144
+    :firefox147
+
+    :tor
+    :tor145)
+  "A list of built-in browser `impersonate'. ")
+
+(deftype impersonate ()
+  '(satisfies impersonate-p))
+
+(defun impersonate-p (impersonate)
+  "Test if IMPERSONATE is type of `impersonate'. "
+  (and (keywordp impersonate)
+       (or (member impersonate *built-in-impersonate*)
+           (and (gethash impersonate *impersonates*) t))))
+
+(defun curl-easy-impersonate (handle impersonate
+                              &optional use-default-headers-p)
+  "Apply HANDLE"
+  (declare (type foreign-pointer handle)
+           (type impersonate impersonate))
+  (cond ((member impersonate *built-in-impersonate*)
+         (check-curl-code
+          (foreign-funcall "curl_easy_impersonate"
+                           :pointer handle
+                           :string  (format nil "~(~A~)" impersonate)
+                           :int     (if use-default-headers-p 1 0)
+                           :int)))
+        (t
+         (let ((info (gethash impersonate *impersonates*)))
+           (loop :for (option parameter) :on info :by #'cddr
+                 :do (curl-easy-setopt handle option parameter))))))
 
 
 ;;;; Syntax Sugar

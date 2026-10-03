@@ -36,7 +36,12 @@ use for the package `dexador.backend.curl-impersonate'. ")
    #:curl-easy-perform
    #:curl-easy-strerror
    #:curl-easy-setopt
+   #:curl-easy-getinfo
+   #:impersonate
+   #:impersonate-p
+   #:curl-easy-impersonate
    #:curl-version
+   #:with-curl-slist
    #:with-easy-curl-handle
    #:+curl-http-version-1.0+
    #:+curl-http-version-1.1+

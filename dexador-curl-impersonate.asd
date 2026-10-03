@@ -8,14 +8,12 @@
   :depends-on (:dexador
                :cffi
                :alexandria
-               :trivial-gray-streams
-               :trivial-garbage
-               :bordeaux-threads)
+               :flexi-streams)
   :pathname "lisp"
   :serial t
   :components
   ((:file "package")
    (:file "ffi")
-   #+todo (:file "dexador")))
+   (:file "dexador")))
 
 ;;;; dexador-curl-impersonate.asd ends here
