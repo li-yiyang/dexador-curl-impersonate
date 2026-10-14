@@ -9,10 +9,12 @@
                :cffi
                :alexandria
                :flexi-streams)
+  :defsystem-depends-on (:cffi-grovel)
   :pathname "lisp"
   :serial t
   :components
   ((:file "package")
+   (:cffi-wrapper-file "wrappers" :soname "libdexador-curl-shim")
    (:file "ffi")
    (:file "dexador")))
 

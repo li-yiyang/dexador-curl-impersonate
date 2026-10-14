@@ -118,6 +118,16 @@ Parameter:
     :pointer handle
     :int)))
 
+(defparameter *curl-easy-setopt*
+  (foreign-symbol-pointer "curl_easy_setopt" :library 'libcurl-impersonate))
+
+(defparameter *curl-easy-getinfo*
+  (foreign-symbol-pointer "curl_easy_getinfo" :library 'libcurl-impersonate))
+
+(defun %curl-setopt-string (function handle option parameter)
+  (with-foreign-string (pointer parameter)
+    (%curl-setopt-pointer function handle option pointer)))
+
 (defcfun (memcpy "memcpy") :pointer
   (destination :pointer)
   (source      :pointer)
@@ -164,12 +174,12 @@ Parameter:
                                         (declare (type foreign-pointer handle)
                                                  (type fixnum option)
                                                  (type ,type parameter))
-                                        (foreign-funcall-varargs
-                                         ("curl_easy_setopt"
-                                          :library libcurl-impersonate)
-                                         (:pointer handle :int option)
-                                         ,ctype ,(or convert 'parameter)
-                                         :int)))))
+                                        (,(ecase ctype
+                                             (:long '%curl-setopt-long)
+                                             (:pointer '%curl-setopt-pointer)
+                                             (:string '%curl-setopt-string))
+                                         *curl-easy-setopt* handle option
+                                         ,(or convert 'parameter))))))
                 (defun curl-easy-setopt (handle option parameter)
                   ,(with-output-to-string (doc)
                      (write-string "Set the OPTION of curl HANDLE with PARAMETER.
@@ -332,11 +342,7 @@ Return foreign-pointer to curl_slist. "
 (defun %curl-easy-getinfo (handle info ctype)
   (with-foreign-object (slot ctype)
     (check-curl-code
-     (foreign-funcall-varargs
-      ("curl_easy_getinfo" :library libcurl-impersonate)
-      (:pointer handle :int info)
-      :pointer slot
-      :int))
+     (%curl-getinfo-pointer *curl-easy-getinfo* handle info slot))
     (mem-ref slot ctype)))
 
 (macrolet ((getinfo (&body ctype-enums)
