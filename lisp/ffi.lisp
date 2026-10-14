@@ -118,6 +118,20 @@ Parameter:
     :pointer handle
     :int)))
 
+(defcfun (memcpy "memcpy") :pointer
+  (destination :pointer)
+  (source      :pointer)
+  (count       :size))
+
+(defun copy-foreign-to-vector (destination start source count)
+  "Copy COUNT octets from SOURCE into DESTINATION at START."
+  (declare (type (simple-array (unsigned-byte 8) (*)) destination)
+           (type (integer 0) start count)
+           (type foreign-pointer source))
+  (with-pointer-to-vector-data (pointer destination)
+    (memcpy (inc-pointer pointer start) source count))
+  destination)
+
 (defcallback curl-writer-function :size
     ((buffer :pointer)
      (size   :size)

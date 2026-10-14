@@ -172,10 +172,9 @@
                                                     value)))
         (curl-easy-setopt curl :http-header slist)
 
-        (let* ((response-stream (if stream
-                                    stream
-                                    (flex:make-in-memory-output-stream)))
-               (headers-table  (make-hash-table :test 'equal)))
+        (let ((response-buffer (make-array 16384 :element-type '(unsigned-byte 8)))
+              (response-size   0)
+              (headers-table   (make-hash-table :test 'equal)))
           (flet ((header-callback (buffer size)
                    ;; curl calls this once per raw header line (CRLF
                    ;; terminated), including the status line and the
@@ -211,12 +210,27 @@
                                       (setf (gethash name headers-table)
                                             value)))))))))
                  (writer-callback (buffer size)
-                   (write-sequence
-                    (cffi:foreign-array-to-lisp
-                     buffer
-                     (list :array :uint8 size)
-                     :element-type '(unsigned-byte 8))
-                    response-stream)))
+                   (when (and (not stream) (zerop response-size))
+                     (alx:when-let ((content-length
+                                      (gethash "content-length" headers-table)))
+                       (let ((length (parse-integer content-length :junk-allowed t)))
+                         (when (and length (> length (length response-buffer)))
+                           (setf response-buffer
+                                 (make-array length
+                                             :element-type '(unsigned-byte 8)))))))
+                   (let ((start (if stream 0 response-size))
+                         (required (if stream size (+ response-size size))))
+                     (when (< (length response-buffer) required)
+                       (let ((larger (make-array (max required
+                                                     (* 2 (length response-buffer)))
+                                                 :element-type '(unsigned-byte 8))))
+                         (unless stream
+                           (replace larger response-buffer :end2 response-size))
+                         (setf response-buffer larger)))
+                     (copy-foreign-to-vector response-buffer start buffer size)
+                     (if stream
+                         (write-sequence response-buffer stream :end size)
+                         (incf response-size size)))))
 
             (curl-easy-setopt curl :writer-function #'writer-callback)
             (curl-easy-setopt curl :header-function #'header-callback)
@@ -232,8 +246,9 @@
                                     +curle-too-many-redirects+)
                            (error e))))
                      (let* ((octets (unless stream
-                                      (flex:get-output-stream-sequence
-                                       response-stream)))
+                                      (if (= response-size (length response-buffer))
+                                          response-buffer
+                                          (subseq response-buffer 0 response-size))))
                             (status (curl-easy-getinfo curl :response-code))
                             (ctype  (curl-easy-getinfo curl :content-type))
                             (final-uri (quri:uri (curl-easy-getinfo curl :effective-url)))
@@ -292,33 +307,27 @@
                        ;; stream; this backend hands the socket to curl
                        ;; and never owns one, so it is always NIL.
                        (values body status headers-table final-uri nil))))
-              ;; Send CONTENT (if any). `CURLOPT_POSTFIELDS' does not
-              ;; copy its buffer (no `CURLOPT_COPYPOSTFIELDS' here), so
-              ;; it must point at memory that stays alive through
-              ;; `curl-easy-perform' -- CFFI's `:string' ctype only
-              ;; guarantees its marshalled buffer for the duration of
-              ;; the single `curl_easy_setopt' call, which is not
-              ;; enough. So pin an explicitly `foreign-alloc'd buffer,
-              ;; freed via `unwind-protect' once perform returns.
-              (let ((size (length content))
-                    (ptr  nil))
-                (unwind-protect
-                     (progn
-                       ;; A bare `CURLOPT_POST' with no `POSTFIELDS'
-                       ;; makes curl source the body from its read
-                       ;; callback, which defaults to stdin -- so an
-                       ;; empty POST still has to declare size 0.
-                       (when (or content (eq method :post))
-                         (setf ptr (if (zerop size)
-                                       (cffi:null-pointer)
-                                       (cffi:foreign-alloc :uint8 :count size)))
-                         (dotimes (i size)
-                           (setf (cffi:mem-aref ptr :uint8 i) (aref content i)))
-                         (curl-easy-setopt curl :post-field-size size)
-                         (curl-easy-setopt curl :post-fields*    ptr))
-                       (perform))
-                  (when (and ptr (not (cffi:null-pointer-p ptr)))
-                    (cffi:foreign-free ptr)))))))))))
+              ;; CURLOPT_POSTFIELDS retains its pointer until perform
+              ;; returns, so keep the octet vector pinned across both calls.
+              (let* ((size (length content))
+                     (octets (and content
+                                  (if (typep content
+                                             '(simple-array (unsigned-byte 8) (*)))
+                                      content
+                                      (coerce content
+                                              '(simple-array (unsigned-byte 8) (*)))))))
+                ;; A bare CURLOPT_POST with no POSTFIELDS makes curl read
+                ;; from stdin, so an empty POST still declares a zero body.
+                (if (plusp size)
+                    (cffi:with-pointer-to-vector-data (ptr octets)
+                      (curl-easy-setopt curl :post-field-size size)
+                      (curl-easy-setopt curl :post-fields* ptr)
+                      (perform))
+                    (progn
+                      (when (or content (eq method :post))
+                        (curl-easy-setopt curl :post-field-size 0)
+                        (curl-easy-setopt curl :post-fields* (cffi:null-pointer)))
+                      (perform)))))))))))
 
 
 ;;;; patch of dex:request

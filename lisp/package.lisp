@@ -39,6 +39,7 @@ use for the package `dexador.backend.curl-impersonate'. ")
    #:curl-easy-strerror
    #:curl-easy-setopt
    #:curl-easy-getinfo
+   #:copy-foreign-to-vector
    #:impersonate
    #:impersonate-p
    #:*built-in-impersonate*
